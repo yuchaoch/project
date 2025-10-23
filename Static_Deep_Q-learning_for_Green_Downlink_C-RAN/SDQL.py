@@ -3,7 +3,7 @@
 """
 Created on Thu Mar 24 21:35:36 2022
 
-@author: ycchang
+@author: wlcc
 """
 
 import numpy as np
@@ -11,6 +11,7 @@ import pandas as pd
 import sys, time, openpyxl, os, math, random, gc, datetime
 from pathlib import Path
 import matplotlib.pyplot as plt
+import seaborn as sns
 from matplotlib.gridspec import GridSpec
 
 plt.ion()
@@ -60,10 +61,9 @@ class RANINfo:
     __n_itr = 100
     __i_step_dur = 10
     __v_reward_weight = 0
-    __Radius = 200
 
 ########################################################################################################################
-    def __init__(self, circ, step, n_step, n_itr, v_reward_weight, v_rt, Radius):
+    def __init__(self, circ, step, n_step, n_itr, v_reward_weight, v_rt):
         self.__circ=circ
         self.__step=step
         self.__xlsxName='RANInfo_C'+str(self.__circ)+'L_St'+str(self.__step)+'p.xlsx'
@@ -77,12 +77,13 @@ class RANINfo:
         self.__n_itr = n_itr
         self.__v_reward_weight = v_reward_weight
         self.__v_rt = v_rt
-        self.__Radius = Radius
         
         if not os.path.exists('OutCSV_C'+str(self.__circ)+'L_St'+str(self.__step)+'p'):
             os.makedirs('OutCSV_C'+str(self.__circ)+'L_St'+str(self.__step)+'p')
         if not os.path.exists('OutCSV_C'+str(self.__circ)+'L_St'+str(self.__step)+'p/net'):
             os.makedirs('OutCSV_C'+str(self.__circ)+'L_St'+str(self.__step)+'p/net')
+        # if os.path.exists('OutCSV_C'+str(self.__circ)+'L_St'+str(self.__step)+'p/log'):
+        #     shutil.rmtree('OutCSV_C'+str(self.__circ)+'L_St'+str(self.__step)+'p/log')
         if os.path.exists('OutCSV_C'+str(self.__circ)+'L_St'+str(self.__step)+'p/log'):
             pass
         else:
@@ -92,6 +93,42 @@ class RANINfo:
         
         return
 
+########################################################################################################################
+    def var_name(var,all_var=locals()):
+        return [var_name for var_name in all_var if all_var[var_name] is var][0]
+
+########################################################################################################################
+    def CDFHistPlot(self, fig, gs, v_gs, v_data, strTitle, v_xlim_min_max):
+        ax = fig.add_subplot(gs[v_gs[0], v_gs[1]])
+        plt.grid(linestyle="-.", color="k", linewidth='0.5')
+        n, bins, patches = plt.hist(x=v_data, bins=self.__n_step*2, color='green', edgecolor = 'blue')
+        self.cdfplot(v_data, strTitle, 'k-', np.max(n))
+        if v_xlim_min_max[1]>=-50:
+            plt.xlim([-0.5, 1.2*v_xlim_min_max[1]])            
+        # plt.ylim([-.05*np.max(n), np.max(n)*1.05])
+        plt.title(strTitle)
+        plt.xlabel('Value');   plt.ylabel('CDF & Count')
+        
+        return
+
+########################################################################################################################
+    def selfSort(self, xdata):
+        nums=xdata
+        sorted_nums=sorted(enumerate(nums), key=lambda x:x[1])
+        idx=[i[0] for i in sorted_nums]
+        nums=[i[1] for i in sorted_nums]
+        return np.array(nums), np.array(idx)
+
+########################################################################################################################    
+    def smooth(self, data, weight=0.9):
+        last = data[0]  # First value in the plot (first timestep)
+        smoothed = list()
+        for point in data:
+            smoothed_val = last * weight + (1 - weight) * point  # 计算平滑值
+            smoothed.append(smoothed_val)
+            last = smoothed_val
+        return smoothed
+
 #################################################################################################################################### 
     def cdfplot(self, xdata, strLabel, strStyle, n_):
         x=np.sort(xdata)
@@ -100,8 +137,22 @@ class RANINfo:
         
         return
 
+########################################################################################################################    
+    def plot_rewards(self, rewards, tag='train'):
+        sns.set()
+        plt.figure()  # 创建一个图形实例，方便同时多画几个图
+        plt.title("Reward")
+        plt.xlabel('epsiodes')
+        plt.plot(rewards, label='rewards')
+        plt.plot(self.smooth(rewards), label='smoothed')
+        plt.legend()
+        plt.savefig(f"{tag}ing_curve.png")
+        plt.show()
+
 ########################################################################################################################
     def write2Excel(self, strexcelFile, sheetName, pd_DF, indexFalse):
+        # print('%s: [L%s]_[%s]_[%s]_[%s], %.1fs' % (self.__curDir[-10:], sys._getframe().f_lineno, sys._getframe(0).f_code.co_name,
+        #                             sys._getframe(1).f_code.co_name, sheetName, (time.time()-self.__t_start)))
         strFile=Path(strexcelFile)        
         if  strFile.is_file():
             fileStat=os.stat(strFile)
@@ -125,15 +176,25 @@ class RANINfo:
 
         return
 
-
-#################################### Network Topology Start ############################################################
+########################################################################################################################
+    def circshift(u,shiftnum1,shiftnum2):
+        h,w = u.shape
+        if shiftnum1 < 0:
+            u = np.vstack((u[-shiftnum1:,:],u[:-shiftnum1,:]))
+        else:
+            u = np.vstack((u[(h-shiftnum1):,:],u[:(h-shiftnum1),:]))
+        if shiftnum2 > 0:
+            u = np.hstack((u[:, (w - shiftnum2):], u[:, :(w - shiftnum2)]))
+        else:
+            u = np.hstack((u[:,-shiftnum2:],u[:,:-shiftnum2]))
+        return u
 
 ########################################################################################################################
     def GenAntena(self):
-        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[self.__curDir.rfind('/')+1:], self.__circ, self.__step,
+        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[-10:], self.__circ, self.__step,
                                                  sys._getframe().f_lineno, sys._getframe(0).f_code.co_name,
                                                  sys._getframe(1).f_code.co_name, (time.time()-self.__t_start)))
-        Radius = self.__Radius;        f = 3e10;        lamda = (3e8) / f;        beta = 2 * np.pi / lamda;
+        Radius = 200;        f = 3e10;        lamda = (3e8) / f;        beta = 2 * np.pi / lamda;
         maxGain=40;        n=8;                m=8;            v_RowCol=[360,181]
         t=np.linspace(0.0001,2*np.pi-.0001,v_RowCol[0])
         d=lamda/4
@@ -173,11 +234,11 @@ class RANINfo:
 
 ########################################################################################################################
     def NetCtnCnt(self):
-        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[self.__curDir.rfind('/')+1:], self.__circ, self.__step,
+        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[-10:], self.__circ, self.__step,
                                                  sys._getframe().f_lineno, sys._getframe(0).f_code.co_name,
                                                  sys._getframe(1).f_code.co_name, (time.time()-self.__t_start)))
 
-        Radius = self.__Radius;                d_BS2BS=np.sqrt(3)*Radius/2;                n_Sector=6
+        Radius=200;                d_BS2BS=np.sqrt(3)*Radius/2;                n_Sector=6
         m_BSCtnCdt=[1,0,1,0,0]
         for iCL in range(1,self.__circ+1):
             n_BSPerCL=n_Sector*iCL
@@ -234,11 +295,16 @@ class RANINfo:
         
         return
 
-
+########################################################################################################################
+    def GridBSRSRP(self):
+        
+        Because my paper was plagiarized by someone with academic misconduct. So the code for this article is accessed with restriction. if you want the full code, please reach me with yuchaoch@126.com. 
+        
+        return
 
 ########################################################################################################################
     def CalcRSRP(self):
-        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[self.__curDir.rfind('/')+1:], self.__circ, self.__step,
+        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[-10:], self.__circ, self.__step,
                                                  sys._getframe().f_lineno, sys._getframe(0).f_code.co_name,
                                                  sys._getframe(1).f_code.co_name, (time.time()-self.__t_start)))
 
@@ -274,9 +340,9 @@ class RANINfo:
                 delta_h=self.__h_BS-self.__h_UT
                 d_3D=np.sqrt(np.power(d_2D, 2)+np.power(delta_h, 2))
 
-                nlos_Pathloss = 32.4 + 30*math.log(d_3D, 10) + 20*math.log(f_c/1e9, 10)
+                nlos_Pathloss=32.4+30*math.log(d_3D, 10)+20*math.log(f_c/1e9, 10)+0
 
-                ret_RSRP = self.__P_max + 17.5 - 1 - 13 - nlos_Pathloss - s_attu
+                ret_RSRP=self.__P_max+17.5-1-13-nlos_Pathloss-s_attu #+np.random.rand()*5 #15
                 m_RSRP[iR,jC]=ret_RSRP
 
         n_m_RSRP = m_RSRP.shape[0]
@@ -297,7 +363,7 @@ class RANINfo:
 
 ########################################################################################################################
     def CalLmtSINR(self):
-        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[self.__curDir.rfind('/')+1:], self.__circ, self.__step,
+        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[-10:], self.__circ, self.__step,
                                                  sys._getframe().f_lineno, sys._getframe(0).f_code.co_name,
                                                  sys._getframe(1).f_code.co_name, (time.time()-self.__t_start)))
         for iD in range(self.__n_DF):
@@ -336,6 +402,7 @@ class RANINfo:
                 v_GridITF_J = np.hstack((v_GridITF_J, vt_GridITF_J))
             except:
                 v_GridITF_J = vt_GridITF_J
+        # v_GridITF_J = (np.sum(10**(m_GridRSRP/10),axis = 1)+10**(-125/10)).flatten()
         v_GridITF= [10*math.log(v_GridITF_J[i], 10) for i in range(len(v_GridITF_J))]
         v_GridITF=np.array(v_GridITF).reshape(-1,1)
         m_LimitSINR=np.hstack((m_LimitSINR,v_hRSRP_tmp-v_GridITF,v_GridITF,np.zeros((r_GridRSRP,1)),m_GridRSRP))
@@ -354,6 +421,7 @@ class RANINfo:
                 mt_RSRP = m_LimitSINR[iD*t_idx:(iD+1)*t_idx,:]
             else:
                 mt_RSRP = m_LimitSINR[(iD)*t_idx:,:]
+            # t_strIndex = strIndex[iD*t_idx:(iD+1)*t_idx]
             pd_DF=pd.DataFrame(data=mt_RSRP, columns=strColum)
             pd_DF.to_csv((self.__docHeader+'4LmtSINR'+str(iD)+'.csv').replace('p/CSV_','p/net/CSV_'),index=False)
         
@@ -362,10 +430,6 @@ class RANINfo:
 
         return
 
-#################################### Network Topology End ##############################################################
-
-
-#################################### SDQL Start ########################################################################
 
 ########################################################################################################################
     def GetStaticQLDataSlice(self, pd0_atvCell, pd_atvCell, v_action, i_step):
@@ -515,6 +579,7 @@ class RANINfo:
         v_cluster_RSRP_dec = self.__v_cluster_RSRP_dec
         v_RSRP_oft = pd_atvCell['RSRP_oft'].values        
         v_atvCell = pd_atvCell['Cell_ID'].values
+        # v_cell_cluster_RSRP = [0]*len(v_RSRP_oft)
         l_atv_state = [0]*len(v_RSRP_oft)
         vt_idx = np.argwhere(v_RSRP_oft<v_cluster_RSRP_dec[0]).flatten()
         l_cur_state = []
@@ -542,6 +607,7 @@ class RANINfo:
             st_ = 'S'+str(i_+1)+'|'+str(v_cluster_RSRP_dec[i_])+': '+str(v_atvCell[vt_idx_l_h]).replace('[ ','[')            
             for j_ in vt_idx_l_h:
                 l_atv_state[j_] = st_
+                # v_cell_cluster_RSRP[j_] = v_cluster_RSRP_dec[i_]
             if (self.__pd_Q_table is None):
                 self.__pd_Q_table = pd.DataFrame([[0]*len(self.__v_actions)], index=[st_], columns=self.__v_actions)
             else:
@@ -606,6 +672,7 @@ class RANINfo:
             v_sum_action = v_sum_action + v_action
             pd_atvCell_, pd_atv_GridRSRP = self.CalCommMetric(pd_atvCell, pd_atv_GridRSRP, v_action)            
             v_Reward = self.__v_reward_weight[0]*v_action - self.__v_reward_weight[1]*(pd_atvCell['THR'].values - pd_atvCell_['THR'].values)
+            # v_Reward = self.__v_reward_weight[0] * v_action + self.__v_reward_weight[1] *  pd_atvCell_['THR'].values
             v_reward_0 = np.hstack((v_reward_0, np.round(np.sum(v_Reward), 1)))
             pd_atvCell_['Reward'] = v_Reward
             v_Reward, lt_index = self.GetStaticQLDataSlice(pd_atvCell, pd_atvCell_, v_action, i_step+1)
@@ -630,7 +697,7 @@ class RANINfo:
 
 ########################################################################################################################
     def QLearningLoop(self, rt):        
-        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[self.__curDir.rfind('/')+1:], self.__circ, self.__step,
+        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs' % (self.__curDir[-10:], self.__circ, self.__step,
                                                  sys._getframe().f_lineno, sys._getframe(0).f_code.co_name,
                                                  sys._getframe(1).f_code.co_name, (time.time()-self.__t_start)))
         v_static_stop_step = [0]
@@ -737,9 +804,10 @@ class RANINfo:
                 vt_ = [np.min(v_static_stop_step[1:]), np.mean(v_static_stop_step[1:]), np.median(v_static_stop_step[1:]), np.max(v_static_stop_step[1:])]
                 plt.text(self.__n_step*0.5,  0.065, 'Stat: '+str(np.round(vt_,1)))
                 plt.pause(0.0001)
+                # plt.legend(loc='best')
                 plt.ioff()
                 vt_ = [int(time.time()-self.__t_start), sys._getframe().f_lineno, np.round(itr/self.__n_itr+.0001, 4), itr, self.__n_itr]
-                print(f'({str(len(v_atvCell)).ljust(3)} {str(n_Satify).ljust(3)} {str(n_static_satify).ljust(3)} {str(vt_).ljust(32)})')
+                print(([len(v_atvCell), n_Satify, n_static_satify], vt_))
         l_str_col = ['N_Cell', 'N_atvCell', 'Iteration', 'RSRP0', 'Satify0', 'RSRP_oft0', 'act', 'RSRP', 'ITF_dec', 'SINR_dec', 'THR_dec', 'Reward', 'Satify', 'Satify-1', 'Satify+1', 'Activation', 'Sleep', 'Proposed']
         pd_static_stat = pd.DataFrame(m_static_stat, columns=l_str_col)
         pd_static_stat.to_csv((self.__docHeader+t_str+'_5pd0_static_iteration_stat.csv'),index=True)
@@ -754,12 +822,6 @@ class RANINfo:
         self.__pd_static_Reward.to_csv((self.__docHeader+t_str+'_5pd6_static_Reward_log_'+str(self.__i_file)+'.csv').replace('p/CSV_',tt_str),index=True)
 
         return
-
-#################################### SDQL End ##########################################################################
-
-
-
-#################################### Data statistics Start #############################################################
 
 ########################################################################################################################
     def StatDataTackle(self):
@@ -778,7 +840,7 @@ class RANINfo:
                 m_UE = vt_[1:]
                 l_col = pd_.columns[1:]
         pd_UE = pd.DataFrame(m_UE, columns=l_col)
-        self.write2Excel('C'+str(self.__circ)+'L_St'+str(self.__step)+'p_Data_stat_average.xlsx', 'UE', pd_UE, False)
+        self.write2Excel('Data_stat_average.xlsx', 'UE', pd_UE, False)
         
         m_wt = np.array([[0.1,0.9],[0.3,0.7],[0.5,0.5],[0.7,0.3],[0.9,0.1]])
         l_row = []
@@ -793,20 +855,22 @@ class RANINfo:
         pd_WT = pd.DataFrame(m_WT, columns=l_col)
         pd_WT['Weight'] = l_row
         pd_WT = pd.concat([pd_WT['Weight'], pd_WT.drop(columns='Weight')], axis=1)
-        self.write2Excel('C'+str(self.__circ)+'L_St'+str(self.__step)+'p_Data_stat_average.xlsx', 'Weight', pd_WT, False)
+        self.write2Excel('Data_stat_average.xlsx', 'Weight', pd_WT, False)
 
        
         return
 
 ########################################################################################################################
     def pltPowerReduction(self):
-        pd_WT = pd.read_excel(io='C'+str(self.__circ)+'L_St'+str(self.__step)+'p_Data_stat_average.xlsx', sheet_name='Weight')
-        pd_UE = pd.read_excel(io='C'+str(self.__circ)+'L_St'+str(self.__step)+'p_Data_stat_average.xlsx', sheet_name='UE')
+        pd_WT = pd.read_excel(io='Data_stat_average.xlsx', sheet_name='Weight')
+        pd_UE = pd.read_excel(io='Data_stat_average.xlsx', sheet_name='UE')
         
         v_reward_weight_rt = [0.5, 0.5, 0.3]
         t_str = 'wt'+str(v_reward_weight_rt[0]) + '-' + str(v_reward_weight_rt[1]) + '_rt' +str(v_reward_weight_rt[2])
         t_str= self.__docHeader+t_str+'_5pd0_static_iteration_stat.csv'
         font_size = 35
+        # fig = plt.figure(figsize=(23,6.6), dpi=100, constrained_layout=False);
+        # plt.subplots_adjust(left=0.03995, bottom=0.125, right=0.99, top=0.905, wspace=0.2, hspace=0.32)
         fig = plt.figure(figsize=(30,10), dpi=100, constrained_layout=True)
         gs = GridSpec(1, 2, figure=fig)
         plt.rcParams['font.size'] = font_size
@@ -816,7 +880,10 @@ class RANINfo:
         self.pltLineData(pd_UE.loc[:,['RSRP_oft0', 'act', 'ITF_dec']].values, l_xlim,
                          'The number of activated RRHs (in 1)', '(2) Power offset, power reduction, and interference \n reduction for the number of activated RRHs', fig, gs, [0, 1], 0)
         plt.savefig('3Power_reduction_UE.png')
+        plt.savefig((os.getcwd() + '3Power_reduction_UE.eps').replace('python', 'latex/SDQL/figures/'))
         
+        # fig = plt.figure(figsize=(23,6.6), dpi=100, constrained_layout=False);
+        # plt.subplots_adjust(left=0.05, bottom=0.125, right=0.985, top=0.925, wspace=0.2, hspace=0.32)
         fig = plt.figure(figsize=(30,10), dpi=100, constrained_layout=True)
         gs = GridSpec(1, 2, figure=fig)
         plt.rcParams['font.size'] = font_size
@@ -826,6 +893,7 @@ class RANINfo:
         self.pltLineData(pd_WT.loc[:,['RSRP_oft0', 'act', 'ITF_dec']].values, l_xlim,
                          'Value of (w0, w1)', '(2) Power offset, power reduction, and interference \n reduction for (w0, w1)', fig, gs, [0, 1], 0)
         plt.savefig('4Power_reduction_weight.png')
+        plt.savefig((os.getcwd() + '4Power_reduction_weight.eps').replace('python', 'latex/SDQL/figures/'))
 
         return
 
@@ -861,6 +929,8 @@ class RANINfo:
         st_str = t_str[t_idx:t_idx+10]
         l_style = ['k-', 'r-.', 'b-', 'y-', 'b-.']        
         
+        # fig = plt.figure(figsize=(23,6.6), dpi=100, constrained_layout=False);
+        # plt.subplots_adjust(left=0.03995, bottom=0.125, right=0.985, top=0.925, wspace=0.2, hspace=0.32)
         fig = plt.figure(figsize=(30,10), dpi=100, constrained_layout=True)
         gs = GridSpec(1, 2, figure=fig)        
         ax = fig.add_subplot(gs[0, 0])
@@ -893,7 +963,12 @@ class RANINfo:
         plt.xlabel('The number of transformed UE (in 1)', fontsize=font_size)
         
         plt.savefig('6Power_satisfy.png')
+        plt.savefig((os.getcwd() + '6Power_satisfy.eps').replace('python', 'latex/SDQL/figures/'))
+        print((os.getcwd() + '6Power_satisfy.eps').replace('python', 'latex/SDQL/figures/'))
+
         
+        # fig = plt.figure(figsize=(23,6.6), dpi=100, constrained_layout=False);
+        # plt.subplots_adjust(left=0.03995, bottom=0.125, right=0.985, top=0.925, wspace=0.2, hspace=0.32)
         fig = plt.figure(figsize=(30,10), dpi=100, constrained_layout=True)
         gs = GridSpec(1, 2, figure=fig)
         font_size = font_size - 1
@@ -915,9 +990,11 @@ class RANINfo:
         ax = fig.add_subplot(gs[0, 1])
         ax.grid(linestyle="-.", color="c", linewidth=0.0001)
         v_ = [0.2,0.3,0.4,0.5,0.6]
+        # t_max = 0
         for i_ in range(len(v_)):
             pd_DF_ST = pd.read_csv(t_str.replace(st_str, 'V_C'+str(self.__circ)+'L_St'+str(self.__step)+'p').replace('_rt0.3', '_rt'+str(v_[i_])))
             self.cdfplot(pd_DF_ST['act'].values, 'The number of activated RRHs: '+str(int(pd_DF_ST.loc[0,'N_atvCell'])), l_style[i_], 1)
+            # t_max = np.max([t_max, np.max(pd_DF_ST['act'].values)])
         plt.legend(loc='lower right', fontsize=font_size)
         plt.title('(2) Power reduction for the number of activated RRHs', fontsize=font_size)
         plt.xlim([-0.5, t_max+2.5])
@@ -925,18 +1002,23 @@ class RANINfo:
         plt.xlabel('Power reduction value (in dB)', fontsize=font_size)
         
         plt.savefig('7Power_offset_reduction_dec.png')
-        plt.savefig((os.getcwd() + '7Power_offset_reduction_dec.eps'))
+        plt.savefig((os.getcwd() + '7Power_offset_reduction_dec.eps').replace('python', 'latex/SDQL/figures/'))
+        print((os.getcwd() + '7Power_offset_reduction_dec.eps').replace('python', 'latex/SDQL/figures/'))
         
         
+        # fig = plt.figure(figsize=(23,6.6), dpi=100, constrained_layout=False);
+        # plt.subplots_adjust(left=0.03995, bottom=0.125, right=0.985, top=0.925, wspace=0.2, hspace=0.32)
         fig = plt.figure(figsize=(30,10), dpi=100, constrained_layout=True)
         gs = GridSpec(1, 2, figure=fig)
         plt.rcParams['font.size'] = font_size
         ax = fig.add_subplot(gs[0, 0])
         ax.grid(linestyle="-.", color="c", linewidth=0.0001)
         v_ = [0.2,0.3,0.4,0.5,0.6]
+        # t_max = 0
         for i_ in range(len(v_)):
             pd_DF_ST = pd.read_csv(t_str.replace(st_str, 'V_C'+str(self.__circ)+'L_St'+str(self.__step)+'p').replace('_rt0.3', '_rt'+str(v_[i_])))
             self.cdfplot(pd_DF_ST['THR_dec'].values, 'The number of activated RRHs: '+str(int(pd_DF_ST.loc[0,'N_atvCell'])), l_style[i_], 1)
+            # t_max = np.max([t_max, np.max(pd_DF_ST['THR_dec'].values)])
         plt.legend(loc='lower right', fontsize=font_size)
         plt.title('(1) Throughput loss for the number of activated RRHs', fontsize=font_size)
         plt.xlim([-0.5, t_max+2.5])
@@ -946,9 +1028,11 @@ class RANINfo:
         ax = fig.add_subplot(gs[0, 1])
         ax.grid(linestyle="-.", color="c", linewidth=0.0001)
         v_ = [0.2,0.3,0.4,0.5,0.6]
+        # t_max = 0
         for i_ in range(len(v_)):
             pd_DF_ST = pd.read_csv(t_str.replace(st_str, 'V_C'+str(self.__circ)+'L_St'+str(self.__step)+'p').replace('_rt0.3', '_rt'+str(v_[i_])))
             self.cdfplot(pd_DF_ST['ITF_dec'].values, 'The number of activated RRHs: '+str(int(pd_DF_ST.loc[0,'N_atvCell'])), l_style[i_], 1)
+            # t_max = np.max([t_max, np.max(pd_DF_ST['ITF_dec'].values)])
         plt.legend(loc='lower right', fontsize=font_size)
         plt.title('(2) Interference reduction for the number of activated RRHs', fontsize=font_size)
         plt.xlim([-0.5, t_max+2.5])
@@ -956,7 +1040,8 @@ class RANINfo:
         plt.xlabel('Interference reduction value (in dB)', fontsize=font_size)
         
         plt.savefig('8Power_THR_ITF_dec.png')
-        plt.savefig((os.getcwd() + '8Power_THR_ITF_dec.eps'))
+        plt.savefig((os.getcwd() + '8Power_THR_ITF_dec.eps').replace('python', 'latex/SDQL/figures/'))
+        print((os.getcwd() + '8Power_THR_ITF_dec.eps').replace('python', 'latex/SDQL/figures/'))
         
         return
 
@@ -968,6 +1053,8 @@ class RANINfo:
         l_style = ['k:', 'r-.', 'b--', 'y-']        
         pd_DF = pd.read_csv(t_str)
         font_size = 35
+        # fig = plt.figure(figsize=(12,6.0), dpi=100, constrained_layout=False);
+        # plt.subplots_adjust(left=0.0695, bottom=0.125, right=0.985, top=0.925, wspace=0.2, hspace=0.32)
         fig = plt.figure(figsize=(25,12), dpi=100, constrained_layout=True)
         gs = GridSpec(1, 1, figure=fig)
         plt.rcParams['font.size'] = font_size
@@ -986,6 +1073,9 @@ class RANINfo:
                  label='Average interference reduction: '+str(np.round(np.mean(pd_DF['ITF_dec'].values), 2)), linewidth = 2.5)
         plt.plot(_x, [np.mean(pd_DF['THR_dec'].values)]*len(_x), 'y-', 
                  label='Average throughput loss: '+str(np.round(np.mean(pd_DF['THR_dec'].values), 2)), linewidth = 2.5)
+        # self.cdfplot(pd_DF['RSRP_oft0'].values, 'Power offset', l_style[0], 1)
+        # self.cdfplot(pd_DF['act'].values, 'Power reduction', l_style[1], 1)
+        # self.cdfplot(pd_DF['ITF_dec'].values, 'Interference reduction', l_style[2], 1)
         plt.title('Power offset, power reduction, interference reduction, and throughput loss', fontsize=font_size)
         plt.xlabel('The number of samples (in 1)', fontsize=font_size)
         plt.ylabel('value', fontsize=font_size)
@@ -993,6 +1083,7 @@ class RANINfo:
         plt.ylim([-3, 86])
         plt.legend(loc='upper center', ncol=2, fontsize=font_size)
         plt.savefig('5RSRPOft_action_ITF_analysis.png')
+        plt.savefig((os.getcwd() + '5RSRPOft_action_ITF_analysis.eps').replace('python', 'latex/SDQL/figures/'))
 
 ########################################################################################################################
     def pltReward(self):
@@ -1047,10 +1138,13 @@ class RANINfo:
         plt.legend(loc='upper right')
         
         plt.savefig('3convergence_analysis.png')
+        plt.savefig((os.getcwd() + '3convergence_analysis.eps').replace('python', 'latex/SDQL/figures/'))
         
 
 ########################################################################################################################
     def pltIteration(self):
+        # fig = plt.figure(figsize=(23,6.6), dpi=100, constrained_layout=False);
+        # plt.subplots_adjust(left=0.0395, bottom=0.125, right=0.985, top=0.925, wspace=0.2, hspace=0.32)
         fig = plt.figure(figsize=(25,7), dpi=100, constrained_layout=True)
         gs = GridSpec(1, 3, figure=fig)
 
@@ -1091,6 +1185,9 @@ class RANINfo:
         t_str= self.__docHeader+t_str+'_5pd0_static_iteration_stat.csv'
         t_idx = t_str.find('V_C')
         st_str = t_str[t_idx:t_idx+10]
+        # fig = plt.figure(figsize=(23,6.6), dpi=100, constrained_layout=False);
+        # plt.subplots_adjust(left=0.03995, bottom=0.125, right=0.985, top=0.925, wspace=0.2, hspace=0.32)
+        # gs = GridSpec(1, 2, figure=fig)
         ax = fig.add_subplot(gs[0, 0])
         ax.grid(linestyle="-.", color="c", linewidth=0.0001)
         v_ = [0.2,0.3,0.4,0.5,0.6]
@@ -1137,25 +1234,19 @@ class RANINfo:
         plt.legend(loc='upper right', fontsize=font_size)
         
         plt.savefig('9iteration_analysis.png')
+        plt.savefig((os.getcwd() + '9iteration_analysis.eps').replace('python', 'latex/SDQL/figures/'))
         
         return
 
-#################################### Data statistics End ###############################################################
-
 
 ########################################################################################################################
-    def TopologyFun(self):
-        self.GenAntena()
-        self.NetCtnCnt()
-        self.GridBSRSRP()
-        self.CalcRSRP()
-        self.CalLmtSINR()
-
-        return
-
-########################################################################################################################
-    def QLFun(self):
-        plt.close('all')        
+    def excFun(self):
+        plt.close('all')
+        # self.GenAntena()
+        # self.NetCtnCnt()
+        # self.GridBSRSRP()
+        # self.CalcRSRP()
+        # self.CalLmtSINR()
         
         for ir in self.__v_rt:
             self.QLearningLoop(ir)
@@ -1164,7 +1255,7 @@ class RANINfo:
        
         self.__log_file.write(self.__log_txt)
         self.__log_file.close()
-        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs/%.1fh' % (self.__curDir[self.__curDir.rfind('/')+1:], self.__circ, self.__step,
+        print('%s: [C%dL/Step%.f/L%s]_[%s/%s], %.1fs/%.1fh' % (self.__curDir[-10:], self.__circ, self.__step,
                                                  sys._getframe().f_lineno, sys._getframe(0).f_code.co_name,
                                                  sys._getframe(1).f_code.co_name, (time.time()-self.__t_start), (time.time()-self.__t_start)/3600))
         print(datetime.datetime.now())
@@ -1173,49 +1264,32 @@ class RANINfo:
         return
 
 ########################################################################################################################
-    def StatFun(self):
-        plt.close('all')
-        self.StatDataTackle()
-        self.pltPowerReduction()
-        self.pltSatisfyTHRLossITFDec()
-        self.pltReward()
-        self.pltIteration()
-        self.pltDecRSRPOFTITF()
-
-        return
-
-########################################################################################################################
-
-###### It takes approximately 10 hours for the program execution to complete, which depends on the computer configuration.
 
 stp = 1
 n_step = 100
 n_itr = 1000
-Radius = 300
-circle = 2
 
-objRANInfoTop = RANINfo(circle, stp, n_step, n_itr, [0.5, 0.5], [0.3], Radius)
-objRANInfoTop.TopologyFun()     #Excute network topology
+# v_reward_weight = [0.5, 0.5]
+# v_rt = [0.2, 0.3, 0.4, 0.5, 0.6]
+# for v_ in v_rt:
+#     objRANInfo = RANINfo(2, stp, n_step, n_itr, v_reward_weight, [v_])
+#     objRANInfo.excFun()
 
-################ SDQL excution for scenarios Start ################
-v_reward_weight = [0.5, 0.5]
-v_rt = [0.2, 0.4, 0.5, 0.6]
-for v_ in v_rt:
-    objRANInfo = RANINfo(circle, stp, n_step, n_itr, v_reward_weight, [v_], Radius)
-    objRANInfo.QLFun()
-
-v_rt = [0.3]
-m_wt = np.array([[0.1,0.9],[0.3,0.7],[0.7,0.3],[0.9,0.1]])
-for i_ in range(m_wt.shape[0]):
-    v_reward_weight = m_wt[i_,:]
-    objRANInfo3 = RANINfo(circle, stp, n_step, n_itr, v_reward_weight, v_rt, Radius)
-    objRANInfo3.QLFun()
+# v_rt = [0.3]
+# m_wt = np.array([[0.1,0.9],[0.3,0.7],[0.7,0.3],[0.9,0.1]])
+# for i_ in range(m_wt.shape[0]):
+#     v_reward_weight = m_wt[i_,:]
+#     objRANInfo3 = RANINfo(2, stp, n_step, n_itr, v_reward_weight, v_rt)
+#     objRANInfo3.excFun()
 
 v_reward_weight = [0.5, 0.5]
 v_rt = [0.3]
-objRANInfo = RANINfo(circle, stp, n_step, n_itr, v_reward_weight, v_rt, Radius)
-objRANInfo.QLFun()
-################ SDQL excution for scenarios End #################
-
-objRANInfo.StatFun()     #Excute data statistics
+objRANInfo = RANINfo(2, stp, n_step, n_itr, v_reward_weight, v_rt)
+plt.close('all')
+objRANInfo.StatDataTackle()
+objRANInfo.pltPowerReduction()
+objRANInfo.pltSatisfyTHRLossITFDec()
+objRANInfo.pltReward()
+objRANInfo.pltIteration()
+objRANInfo.pltDecRSRPOFTITF()
 plt.close('all')
